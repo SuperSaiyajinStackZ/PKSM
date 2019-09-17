@@ -30,6 +30,7 @@
 #include "PKX.hpp"
 #include "json.hpp"
 #include <memory>
+#include <atomic>
 
 class CloudAccess
 {
@@ -49,6 +50,7 @@ public:
     int page() const { return pageNumber; }
     bool nextPage();
     bool prevPage();
+    long lastStatus() { return statusCode; }
     void sortType(SortType type)
     {
         if (sort != type)
@@ -99,11 +101,12 @@ private:
     };
     void refreshPages();
     bool isGood = false;
-    std::shared_ptr<Page> current;
+    std::shared_ptr<Page> current, next, prev;
     int pageNumber;
     SortType sort = LATEST;
     bool ascend   = true;
     bool legal    = false;
+    static std::atomic<long> statusCode;
     friend void incrementPkmDownloadCount(std::string* num);
     friend void downloadCloudPage(CloudAccess::PageDownloadInfo* di);
 };

@@ -67,6 +67,7 @@ void downloadCloudPage(CloudAccess::PageDownloadInfo* info)
                 default:
                     info->page->data = {};
             }
+            CloudAccess::statusCode = status_code;
             info->page->data = nlohmann::json::parse(retData, nullptr, false);
         }
         else
@@ -91,6 +92,29 @@ void CloudAccess::refreshPages()
         current->data      = grabPage(pageNumber);
         current->available = true;
         isGood             = !current->data.is_discarded() && current->data.size() > 0;
+    }
+    if (isGood)
+    {
+        if (pages() > 1)
+        {
+            int page    = (pageNumber % current->data["pages"].get<int>()) + 1;
+            next = std::make_shared<Page>();
+            Threads::create((ThreadFunc)downloadCloudPage, new PageDownloadInfo(next, page, sort, ascend, legal));
+            if (pages() > 2)
+            {
+                page = pageNumber - 1 == 0 ? current->data["pages"].get<int>() : pageNumber - 1;
+                prev = std::make_shared<Page>();
+                Threads::create((ThreadFunc)downloadCloudPage, new PageDownloadInfo(prev, page, sort, ascend, legal));
+            }
+            else
+            {
+                prev = next;
+            }
+        }
+        else
+        {
+            next = prev = current;
+        }
     }
 }
 
@@ -221,11 +245,7 @@ std::shared_ptr<PKX> CloudAccess::fetchPkm(size_t slot) const
             return std::make_shared<PK7>();
         }
 
-        if (auto fetch = Fetch::init(
-                "https://flagbrew.org/gpss/download/" + current->data["results"][slot]["code"].get<std::string>(), false, true, nullptr, nullptr, ""))
-        {
-            fetch->perform();
-        }
+        Threads::create((ThreadFunc)incrementPkmDownloadCount, new std::string(current->data["results"][slot]["code"].get<std::string>()));
 
         return PKX::getPKM(gen, retData.data());
     }
@@ -234,32 +254,89 @@ std::shared_ptr<PKX> CloudAccess::fetchPkm(size_t slot) const
 
 bool CloudAccess::nextPage()
 {
-    if (current->data["pages"].get<int>() > 1)
+    if (pages() > 2)
     {
-        pageNumber    = (pageNumber % current->data["pages"].get<int>()) + 1;
-        current->data = grabPage(pageNumber);
-        if (current->data.is_discarded() || current->data.size() == 0)
+        while (!next->available)
         {
-            isGood = false;
+            svcSleepThread(1000);
         }
+        if (next->data.empty() || next->data.is_discarded())
+        {
+            return isGood = false;
+        }
+        // Update data
+        pageNumber    = (pageNumber % pages()) + 1;
+        prev = current;
+        current = next;
+        next = std::make_shared<Page>();
+
+        // Download the next page in the background
+        int nextPage = (pageNumber % pages()) + 1;
+        Threads::create((ThreadFunc)downloadCloudPage, new PageDownloadInfo(next, nextPage, sort, ascend, legal));
     }
+    else if (pages() == 2)
+    {
+        while (!next->available)
+        {
+            svcSleepThread(1000);
+        }
+        if (next->data.empty() || next->data.is_discarded())
+        {
+            return isGood = false;
+        }
+
+        // Swap pages around
+        prev = current;
+        current = next;
+        next = prev;
+    }
+    // Otherwise there's only one page, so no action necessary
     return isGood;
 }
 
 bool CloudAccess::prevPage()
 {
-    if (current->data["pages"].get<int>() > 1)
+    if (pages() > 2)
     {
-        pageNumber    = pageNumber - 1 == 0 ? current->data["pages"].get<int>() : pageNumber - 1;
-        current->data = grabPage(pageNumber);
-        if (current->data.is_discarded() || current->data.size() == 0)
+        while (!prev->available)
         {
-            isGood = false;
+            svcSleepThread(1000);
         }
+        if (prev->data.empty() || prev->data.is_discarded())
+        {
+            return isGood = false;
+        }
+        // Update data
+        pageNumber    = pageNumber - 1 == 0 ? pages() : pageNumber - 1;
+        next = current;
+        current = prev;
+        prev = std::make_shared<Page>();
+
+        // Download the next page in the background
+        int prevPage = pageNumber - 1 == 0 ? pages() : pageNumber - 1;
+        Threads::create((ThreadFunc)downloadCloudPage, new PageDownloadInfo(prev, prevPage, sort, ascend, legal));
     }
+    else if (pages() == 2)
+    {
+        while (!prev->available)
+        {
+            svcSleepThread(1000);
+        }
+        if (prev->data.empty() || prev->data.is_discarded())
+        {
+            return isGood = false;
+        }
+
+        // Swap pages around
+        next = current;
+        current = prev;
+        prev = next;
+    }
+    // Otherwise there's only one page, so no action necessary
     return isGood;
 }
 
+// I don't want this one multithreaded
 long CloudAccess::pkm(std::shared_ptr<PKX> mon)
 {
     long ret            = 0;
