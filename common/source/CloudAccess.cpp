@@ -63,12 +63,13 @@ void downloadCloudPage(CloudAccess::PageDownloadInfo* info)
             switch (status_code)
             {
                 case 200:
+                    info->page->data = nlohmann::json::parse(retData, nullptr, false);
                     break;
                 default:
                     info->page->data = {};
+                    break;
             }
             CloudAccess::statusCode = status_code;
-            info->page->data = nlohmann::json::parse(retData, nullptr, false);
         }
         else
         {
@@ -87,12 +88,9 @@ CloudAccess::CloudAccess() : pageNumber(1)
 void CloudAccess::refreshPages()
 {
     current = std::make_shared<Page>();
-    if (current)
-    {
-        current->data      = grabPage(pageNumber);
-        current->available = true;
-        isGood             = !current->data.is_discarded() && current->data.size() > 0;
-    }
+    current->data      = grabPage(pageNumber);
+    current->available = true;
+    isGood             = !current->data.is_discarded() && current->data.size() > 0;
     if (isGood)
     {
         if (pages() > 1)
